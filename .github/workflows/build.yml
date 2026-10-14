@@ -22,42 +22,37 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: 3. Clean legacy packages & Install JS dependencies
+      - name: 3. Force Latest Xcode (Fixes Swift 6.2.0 mismatch)
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
+      - name: 4. Install JS dependencies
         run: |
           npm install --legacy-peer-deps
           npx expo install --fix
 
-      - name: 4. Generate native iOS project (Expo Prebuild)
+      - name: 5. Generate native iOS project (Expo Prebuild)
         env:
           CI: "1"
           EXPO_NO_GIT_STATUS: "1"
-        run: npx expo prebuild --platform ios --clean
+        run: npx expo prebuild --platform ios --clean --no-install
 
-      - name: 5. Disable Pod Code Signing & Install CocoaPods
+      - name: 6. Install CocoaPods
         working-directory: ios
-        run: |
-          # Asegurar que ningún Pod exija certificado de Apple Developer en Release
-          cat << 'EOF' >> Podfile
+        run: pod install
 
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
-              end
-            end
-          end
-          EOF
-          pod install
-
-      - name: 6. Build Release .app with Xcode (Unsigned)
+      - name: 7. Build Release .app with Xcode (Unsigned)
         working-directory: ios
         run: |
           set -eo pipefail
+          
+          # Fix for "FBReactNativeSpec" script losing Node.js path
+          export NODE_BINARY=$(command -v node)
+          
           WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
           SCHEME="${WORKSPACE%.xcworkspace}"
-          echo "Compilando Workspace: $WORKSPACE | Scheme: $SCHEME"
+          echo "Compilando Workspace: $WORKSPACE | Scheme: $SCHEME | Node: $NODE_BINARY"
 
           xcodebuild build \
             -workspace "$WORKSPACE" \
@@ -69,10 +64,11 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
             COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: 7. Verify Binary & Package into .ipa
+      - name: 8. Verify Binary & Package into .ipa
         working-directory: ios
         run: |
           set -e
@@ -86,7 +82,6 @@ jobs:
           echo "Contenido compilado dentro de $APP_PATH:"
           ls -la "$APP_PATH"
 
-          # Verificar que exista el archivo Info.plist y el ejecutable compilado (no solo Frameworks vacío)
           if [ ! -f "$APP_PATH/Info.plist" ]; then
             echo "ERROR CRÍTICO: El paquete .app está incompleto (no contiene Info.plist ni ejecutable)."
             exit 1
@@ -99,7 +94,7 @@ jobs:
           echo "Tamaño final del IPA generado:"
           ls -lh OfflineVibe.ipa
 
-      - name: 8. Upload IPA Artifact
+      - name: 9. Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: OfflineVibe-iOS-IPA
