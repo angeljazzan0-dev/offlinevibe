@@ -1,0 +1,79 @@
+name: Build iOS Unsigned IPA
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-ios:
+    name: Compile iOS IPA on macOS
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: 1. Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 2. Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 3. Install JS dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: 4. Generate native iOS project (Expo Prebuild)
+        env:
+          CI: "1"
+        run: npx expo prebuild --platform ios --clean
+
+      - name: 5. Install CocoaPods
+        working-directory: ios
+        run: pod install
+
+      - name: 6. Build Release .app with Xcode (Unsigned)
+        working-directory: ios
+        run: |
+          WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
+          SCHEME="${WORKSPACE%.xcworkspace}"
+          echo "Compilando Workspace: $WORKSPACE | Scheme: $SCHEME"
+
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            COMPILER_INDEX_STORE_ENABLE=NO \
+            | xcpretty || xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme "$SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: 7. Package .app into .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
+          echo "Empaquetando aplicación encontrada en: $APP_PATH"
+          cp -r "$APP_PATH" Payload/
+          zip -r -q OfflineVibe.ipa Payload
+
+      - name: 8. Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: OfflineVibe-iOS-IPA
+          path: ios/OfflineVibe.ipa
+          retention-days: 14
