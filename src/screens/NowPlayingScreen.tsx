@@ -209,6 +209,11 @@ export const NowPlayingScreen: React.FC = () => {
           if (update.didJustFinish) {
             advanceToNextInQueue();
           }
+        },
+        {
+          title: playedTrack.title,
+          artist: playedTrack.artist,
+          albumTitle: playedTrack.album || 'Offline Vibe',
         }
       );
 
@@ -279,6 +284,10 @@ export const NowPlayingScreen: React.FC = () => {
     }
   };
 
+  // Enlazar eventos remotos de la Isla Dinámica / Pantalla de bloqueo
+  AudioEngine.onRemoteNext = skipNext;
+  AudioEngine.onRemotePrevious = skipPrevious;
+
   const handleSeek = async (e: GestureResponderEvent) => {
     if (duration <= 1) return;
     const tapX = e.nativeEvent.locationX;
@@ -306,6 +315,11 @@ export const NowPlayingScreen: React.FC = () => {
     if (updated) {
       currentTrackRef.current = updated;
       setCurrentTrack(updated);
+      AudioEngine.syncLockScreenControls({
+        title: updated.title,
+        artist: updated.artist,
+        albumTitle: updated.album,
+      });
       await reloadAllData();
       await recalculateQueue(updated);
     }
@@ -564,7 +578,9 @@ export const NowPlayingScreen: React.FC = () => {
                     ]}
                   >
                     <Text style={styles.searchThumbText}>
-                      {isCurrent ? '▶' : item.track.genre.slice(0, 2).toUpperCase()}
+                      {isCurrent
+                        ? '▶'
+                        : item.track.genre.slice(0, 2).toUpperCase()}
                     </Text>
                   </View>
 
@@ -1199,7 +1215,10 @@ export const NowPlayingScreen: React.FC = () => {
 
             <Pressable
               onPress={() => setTrackToMove(null)}
-              style={[styles.dialogCancelBtn, { alignSelf: 'flex-end', marginTop: 8 }]}
+              style={[
+                styles.dialogCancelBtn,
+                { alignSelf: 'flex-end', marginTop: 8 },
+              ]}
             >
               <Text style={styles.dialogCancelText}>Cerrar</Text>
             </Pressable>
