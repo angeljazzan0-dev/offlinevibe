@@ -22,54 +22,82 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      - name: 3. Install JS dependencies
-        run: npm install --legacy-peer-deps
+      - name: 3. Clean legacy packages & Install JS dependencies
+        run: |
+          npm install --legacy-peer-deps
+          npx expo install --fix
 
       - name: 4. Generate native iOS project (Expo Prebuild)
         env:
           CI: "1"
+          EXPO_NO_GIT_STATUS: "1"
         run: npx expo prebuild --platform ios --clean
 
-      - name: 5. Install CocoaPods
+      - name: 5. Disable Pod Code Signing & Install CocoaPods
         working-directory: ios
-        run: pod install
+        run: |
+          # Asegurar que ningún Pod exija certificado de Apple Developer en Release
+          cat << 'EOF' >> Podfile
+
+          post_install do |installer|
+            installer.pods_project.targets.each do |target|
+              target.build_configurations.each do |config|
+                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+              end
+            end
+          end
+          EOF
+          pod install
 
       - name: 6. Build Release .app with Xcode (Unsigned)
         working-directory: ios
         run: |
+          set -eo pipefail
           WORKSPACE=$(ls -d *.xcworkspace | head -n 1)
           SCHEME="${WORKSPACE%.xcworkspace}"
           echo "Compilando Workspace: $WORKSPACE | Scheme: $SCHEME"
 
-          xcodebuild \
+          xcodebuild build \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Release \
             -sdk iphoneos \
+            -destination "generic/platform=iOS" \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             AD_HOC_CODE_SIGNING_ALLOWED=YES \
-            COMPILER_INDEX_STORE_ENABLE=NO \
-            | xcpretty || xcodebuild \
-            -workspace "$WORKSPACE" \
-            -scheme "$SCHEME" \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            COMPILER_INDEX_STORE_ENABLE=NO
 
-      - name: 7. Package .app into .ipa
+      - name: 7. Verify Binary & Package into .ipa
         working-directory: ios
         run: |
+          set -e
+          APP_PATH=$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No se encontró la carpeta .app"
+            exit 1
+          fi
+
+          echo "Contenido compilado dentro de $APP_PATH:"
+          ls -la "$APP_PATH"
+
+          # Verificar que exista el archivo Info.plist y el ejecutable compilado (no solo Frameworks vacío)
+          if [ ! -f "$APP_PATH/Info.plist" ]; then
+            echo "ERROR CRÍTICO: El paquete .app está incompleto (no contiene Info.plist ni ejecutable)."
+            exit 1
+          fi
+
           mkdir -p Payload
-          APP_PATH=$(find build/Build/Products/Release-iphoneos -name "*.app" | head -n 1)
-          echo "Empaquetando aplicación encontrada en: $APP_PATH"
-          cp -r "$APP_PATH" Payload/
-          zip -r -q OfflineVibe.ipa Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r -y OfflineVibe.ipa Payload
+
+          echo "Tamaño final del IPA generado:"
+          ls -lh OfflineVibe.ipa
 
       - name: 8. Upload IPA Artifact
         uses: actions/upload-artifact@v4
